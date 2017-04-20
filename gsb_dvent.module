@@ -1,0 +1,447 @@
+<?php
+
+/**
+ * @file
+ * Contains hook implementations and helper functions for GSB Dvent
+ */
+
+/**
+ * Implementation of hook_menu().
+ */
+function gsb_dvent_menu() {
+  $items = array();
+  $items['admin/config/gsb/dvent'] = array(
+    'title' => 'GSB Dvent',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('gsb_dvent_settings_form'),
+    'access arguments' => array('administer dvent'),
+    'file' => 'gsb_dvent.admin.inc',
+  );
+  $items['admin/config/gsb/dvent/import'] = array(
+    'title' => 'Start Import',
+    'description' => 'GSB Dvent Import.',
+    'page callback' => 'gsb_dvent_batch_import',
+    'access arguments' => array('administer dvent'),
+  );
+  $items['dvent_import_id/%'] = array(
+    'title' => 'GSB Import.',
+    'description' => 'Imports a single event by id',
+    'page callback' => 'gsb_dvent_event_import_id',
+    'page arguments' => array(1),
+    'access arguments' => array('administer dvent'),
+  );
+  $items['dvent_import_updated'] = array(
+    'title' => 'GSB Import Updated.',
+    'description' => 'Imports updated events',
+    'page callback' => 'gsb_dvent_import_updated',
+    'access arguments' => array('administer dvent'),
+  );
+  return $items;
+}
+
+/**
+ * Implements hook_permission().
+ */
+function gsb_dvent_permission() {
+  return array(
+    'administer dvent' => array(
+      'title' => t('Administer dvent'),
+    ),
+  );
+}
+
+/*
+ * helper function for rest api
+ */
+function gsb_dvent_rest_helper($url, $params = null, $verb = 'GET', $format = 'json', $authorization = null) {
+  $cparams = array(
+    'http' => array(
+    'method' => $verb,
+    'ignore_errors' => true
+    )
+  );
+  if($authorization != null) {
+    $cparams['http']['header'] = "Authorization: $authorization";
+  }
+    if ($params !== null) {
+      $params = http_build_query($params);
+      if ($verb == 'POST') {
+      $cparams['http']['content'] = $params;
+      }else {
+      $url .= '?' . $params;
+      }
+    }
+    $context = stream_context_create($cparams);
+    $fp = fopen($url, 'rb', false, $context);
+    if(!$fp) {
+      $res = false;
+    }else {
+      $res = stream_get_contents($fp);
+    }
+    if($res === false) {
+      throw new Exception("$verb $url failed: $php_errormsg");
+    }
+      switch ($format) {
+        case 'json':
+        $r = json_decode($res);
+        if ($r === null) {
+          throw new Exception("failed to decode $res as json");
+        }
+        return $r;
+        case 'xml':
+        $r = simplexml_load_string($res);
+        if ($r === null) {
+          throw new Exception("failed to decode $res as xml");
+        }
+        return $r;
+      }
+  return $res;
+}
+
+/* 
+  Function for fetching the rest credentials
+ */
+function gsb_dvent_rest_credentials() {
+    $grant_type   = trim(variable_get('grant_type'));
+    $client_id    = trim(variable_get('client_id'));
+    $client_secret= trim(variable_get('client_secret'));
+    $sf_username  = trim(variable_get('sf_username'));
+    $sf_password  = trim(variable_get('sf_password'));
+    $sf_token     = trim(variable_get('sf_token'));
+    $login_url    = trim(variable_get('login_url'));
+    $response     = gsb_dvent_rest_helper( $login_url, array(
+                    'grant_type' => $grant_type,
+                    'client_id'  => $client_id,
+                    'client_secret'=> $client_secret,
+                    'username' => $sf_username,
+                    'password' => $sf_password.$sf_token 
+                  ), 'POST'
+                ); 
+    return $response;
+  }
+
+/**
+ * Implements hook_cron().
+ */
+function gsb_dvent_cron() {
+  gsb_dvent_import_updated();
+}
+
+/**
+ * The batch import hook.
+ */
+
+function gsb_dvent_batch_import() {
+  $batch = array(
+    'operations' => array(),
+    'finished' => 'gsb_dvent_batch_import_finished',
+    'title' => t('Dvent Batch Import'),
+    'init_message' => t('Import is starting...'),
+    'progress_message' => t('Processed @current out of @total.'),
+    'error_message' => t('Import has encountered an error.')
+  );
+
+  $batch['operations'][] = array('gsb_dvent_batch_all_events_import', array("Dvent"));
+  batch_set($batch);
+  batch_process('admin/content'); // The path to redirect to when done.
+}
+
+/**
+ * The batch finish handler.
+ */
+function gsb_dvent_batch_import_finished($success, $results, $operations) {
+  if ($success) {
+    drupal_set_message('Dvent import is complete!');
+  }
+  else {
+    $error_operation = reset($operations);
+    $message = t('An error occurred while processing %error_operation with arguments: @arguments', array(
+      '%error_operation' => $error_operation[0],
+      '@arguments' => print_r($error_operation[1], TRUE)
+    ));
+    drupal_set_message($message, 'error');
+  }
+}
+
+/*
+ * Search all events based on condition
+ */
+function  gsb_dvent_search_events_bycondition($sales_force_response=null, $cond=null, $event_id=null) {
+    $instance_url = $sales_force_response->instance_url;
+    $access_token = $sales_force_response->access_token;
+     //https://<instance_url>/services/apexrest/Rest/v1/campaigns? SEC=yes&SD=TODAY
+    if(!empty($sales_force_response) && !empty($event_id)) {
+      $response = gsb_dvent_rest_helper(
+        "$instance_url/services/apexrest/Rest/v1/campaigns",
+        $cond, 'GET', 'json',"OAuth $access_token");
+        $arrEvent =  json_decode($response,true);
+        return  $arrEvent;
+    } else {
+        $response = gsb_dvent_rest_helper(
+        "$instance_url/services/apexrest/Rest/v1/campaigns",
+        $cond, 'GET', 'json',"OAuth $access_token");
+        $arrEvent =  json_decode($response,true);
+        foreach($arrEvent as $row)
+        {
+          $data[] = $row['Id'];
+        }
+        return $data;
+    }
+}
+
+/*
+ * Gets upcoming events
+ */
+function gsb_dvent_batch_all_events_import($options, &$context) {
+  $cond =  array('SEC'=> 'yes',
+                 'SD' => 'GE(TODAY)');
+  $response = gsb_dvent_rest_credentials();
+  $limit = 5;
+  if (!isset($context['sandbox']['progress'])) {
+    $event_ids = gsb_dvent_search_events_bycondition($response,$cond);
+    $event_chunks = array_chunk($event_ids, $limit);
+    $context['sandbox']['progress'] = 0;
+    $context['sandbox']['max'] = count($event_ids);
+    $context['sandbox']['event_ids'] = $event_chunks;
+    $context['sandbox']['current_chunk'] = 0;
+  }
+  
+  // Display a progress message...
+  $current_chunk = $context['sandbox']['current_chunk'];
+  foreach ($context['sandbox']['event_ids'][$current_chunk] as $event_id) {
+    $cond =  array('Id' => $event_id);
+    $event = gsb_dvent_search_events_bycondition($response, $cond,$event_id);
+    //check the event type matches
+    $event_cat_term = taxonomy_get_term_by_name($event[0]['event_type_for_calendar__c'], 'event_category');
+    if (!empty($event_cat_term)) {
+       gsb_dvent_event_import_id($event);
+        //break;
+    }
+    $context['sandbox']['progress']++;
+  }
+  $context['message'] = "Now processed " . $context['sandbox']['progress'] . " out of " . $context['sandbox']['max'] . "..";
+  $context['sandbox']['current_chunk']++;
+
+  if ($context['sandbox']['progress'] < $context['sandbox'] ['max']) {
+    $context['finished'] = $context['sandbox']['progress'] / $context['sandbox']['max'];
+  }
+}
+
+/*
+ * Import a single event by id
+ */
+function gsb_dvent_event_import_id($event) {
+  $event_id = $event[0]['Id'];
+  // Save the event if it already exists.
+  $query = new EntityFieldQuery();
+  $query->entityCondition('entity_type', 'node')
+    ->entityCondition('bundle', 'admission_event')
+    ->fieldCondition('field_item_id', 'value', (string)$event_id);
+  $entities = $query->execute();
+  if (!empty($entities['node'])) {
+     gsb_dvent_event_import($event);
+  }
+  else
+  {
+     gsb_dvent_event_import($event);
+  }
+  return 'gsb_dvent_event_import_id completed';
+}
+
+/**
+ * Imports an Event
+ */
+function gsb_dvent_event_import($event, $session = NULL) {
+
+  $eventid =  $event[0]['Id'];
+
+  // Check if the event already exists
+  $query = new EntityFieldQuery();
+  $query->entityCondition('entity_type', 'node')
+    ->entityCondition('bundle', 'admission_event')
+    ->fieldCondition('field_item_id', 'value', (string)$eventid);
+  $entities = $query->execute();
+  if (!empty($entities['node'])) {
+    $nid = array_keys($entities['node']);
+    $node = node_load(array_shift($nid));
+  }
+  else {
+    $field_values = array(
+      'type' => 'admission_event',
+      'uid' => 1,
+      'status' => 1,
+      'promote' => 0,
+    );
+    // Create the admission event
+    $node = entity_create('node', $field_values);
+    $node->workbench_moderation_state_new = workbench_moderation_state_published();
+    node_save($node);
+
+    // Set the workbench access
+    $node->workbench_access['access_scheme'] = 'taxonomy'; // or 'menu'
+    $workbench_section_tid  = _gsb_dvent_get_tid_planner('MBA', 'workbench_sections');
+    $node->workbench_access = array($workbench_section_tid); // 12401 MBA id
+    workbench_access_node_update($node);
+  }
+  // update the admission event node information
+  $wrapper = entity_metadata_wrapper('node', $node);
+  $wrapper->field_event_detail->set(1);
+  $program_tid = _gsb_dvent_get_tid_planner('MBA', 'program');
+  $wrapper->field_program_single->set($program_tid);
+
+  $wrapper->field_item_id->set((string)$eventid);
+  $event_status = trim($event[0]['Status']);
+  $event_title  = $event[0]['event_name_for_email__c'];
+  $field_editorial_summary = '';
+  $field_calendar_display  = $event[0]['show_event_on_calendar__c'];
+
+  // Default to original link
+  $field_link = $event[0]['registration_url__c'];
+   // Convert the start and end time to UTC
+  $start_time = _gsb_dvent_convert_to_UTC($event[0]['StartDate']." ".$event[0]['start_time__c']);
+  if($event[0]['EndDate'] != "")
+  $end_time   = _gsb_dvent_convert_to_UTC($event[0]['EndDate']." ".$event[0]['end_time__c']);
+  else
+  $end_time   = _gsb_dvent_convert_to_UTC($event[0]['StartDate']." ".$event[0]['end_time__c']);
+
+  //$start_time = trim($event[0]['StartDate']." ".substr($event[0]['start_time__c'],0,-3));
+  //$end_time   = trim($event[0]['StartDate']." ".substr($event[0]['end_time__c'],0,-3));
+  
+  // Set all the wrapper values
+  $wrapper->field_event_status->set($event_status);
+  $wrapper->title->set((string)$event_title);
+  $wrapper->field_editorial_summary->set((string)$field_editorial_summary);
+  $wrapper->field_calendar_display->set($field_calendar_display);
+  if (valid_url($field_link, TRUE)) {
+    $wrapper->field_link_single->url->set($field_link);
+    $wrapper->field_link_single->attributes->set(array('target' => '_blank'));
+  }
+
+  // Set the event start and end date
+  $wrapper->field_event_date[0]->set(array(
+    'value' => $start_time,
+    'value2' => $end_time,
+  ));
+
+  // Get drupal timezone from taxonomy mapping
+  $timezone_term = taxonomy_get_term_by_name((string)$event[0]['calendar_region__c'], 'timezone');
+  $timezone_term = array_values($timezone_term);
+  if (!empty($timezone_term)) {
+    $wrapper->field_time_zone->set($timezone_term[0]->field_drupal_timezone['und'][0]['value']);
+  }
+
+  // Set the event category
+  $cvent_event_types = explode(', ', $event[0]['event_type_for_calendar__c']);
+  $term_merge = array();
+  foreach ($cvent_event_types as $cvent_event_type) {
+    $term = taxonomy_get_term_by_name($cvent_event_type, 'event_category');
+    $term = array_values($term);
+    $term_merge = array_merge($term_merge, $term);
+    $wrapper->field_event_category->set($term_merge);
+  }
+
+  // Set the region taxonomy
+  $term = taxonomy_get_term_by_name((string)$event[0]['calendar_region__c'], 'region');
+  $term = array_values($term);
+  $wrapper->field_region->set($term);
+
+  // Set different event location fields
+  $field_collection = $wrapper->field_event_location->raw();
+
+  if(empty($field_collection)) {
+    $field_collection_wrapper = _gsb_dvent_create_fc_wrapper('node', $node, 'field_event_location');
+  }
+  else {
+    $field_collection_wrapper = entity_metadata_wrapper('field_collection_item', $wrapper->field_event_location[0]->value());
+  }
+ 
+  $field_collection_wrapper->field_event_location_type->set((string)$event[0]['admissions_event_category__c']);
+
+  $field_collection_wrapper->field_address->country->set((string)$event[0]['country_name__c']);
+  $field_collection_wrapper->field_address->locality->set((string)$event[0]['city__c']);
+  if ($event->CountryCode == 'US') {
+    $field_collection_wrapper->field_address->administrative_area->set((string)$event[0]['StateCode']);
+  }
+  else {
+    $field_collection_wrapper->field_address->administrative_area->set((string)$event[0]['state__c']);
+  }
+  $field_collection_wrapper->save();
+
+  // Finally save the entity
+  $wrapper->save();
+
+}
+
+/**
+ * Create the field collection wrapper
+ */
+function _gsb_dvent_create_fc_wrapper($entity_type, $node, $field_collection_name) {
+  // Create a field_collection_item entity
+  $field_collection_item = entity_create('field_collection_item', array('field_name' => $field_collection_name));
+
+  // Attach it to the node and Wrap it with Entity API
+  $field_collection_item->setHostEntity($entity_type, $node);
+  $field_collection_wrapper = entity_metadata_wrapper('field_collection_item', $field_collection_item);
+  return $field_collection_wrapper;
+}
+
+/*
+ * Convert to UTC time
+ */
+function _gsb_dvent_convert_to_UTC($datetime) {
+  /*$date = new DateObject($date , 'America/Los_Angeles', DATE_FORMAT_ISO);
+  date_timezone_set($date, new DateTimeZone('UTC'));
+  $date = date_format($date, DATE_FORMAT_DATETIME);
+  return $date;*/
+  $tz_from = 'America/Los_Angeles';
+  $tz_to = 'UTC';
+  $format = 'Y-m-d H:i:s';
+  $dt = new DateTime($datetime, new DateTimeZone($tz_from));
+  $dt->setTimeZone(new DateTimeZone($tz_to));
+  return $dt->format(DATE_FORMAT_DATETIME);
+}
+
+/*
+ * Import the updated events used for cron run
+ */
+function gsb_dvent_import_updated() {
+  $client = gsb_cvent_login();
+
+  $start_time = date('Y-m-d');
+
+  $time = date('H:i:s');
+  $end_time = date('Y-m-d', strtotime('+1 days'));
+
+  $start_time .= 'T'.$time;
+  $end_time .= 'T'.$time;
+
+  $event_ids_updated = $client->GetUpdated('Event', $start_time, $end_time);
+
+  if (isset($event_ids_updated->GetUpdatedResult)) {
+    if (count($event_ids_updated->GetUpdatedResult->Id) == 1) {
+      $event_id = $event_ids_updated->GetUpdatedResult->Id;
+      gsb_dvent_event_import_id($event_id);
+    }
+    else {
+      foreach ($event_ids_updated->GetUpdatedResult->Id as $event_id) {
+        gsb_dvent_event_import_id($event_id);
+      }
+    }
+  }
+  return 'Updated events import complete';
+}
+
+/**
+ * Get the tid from event planner lastname
+ */
+function _gsb_dvent_get_tid_planner($planner_lastname, $vocab_name) {
+  $planner_lastnames = explode(' ', $planner_lastname);
+  foreach($planner_lastnames as $planner_lastname) {
+    $term = taxonomy_get_term_by_name($planner_lastname, $vocab_name);
+    if (!empty($term)) {
+      $tid = array_values($term);
+      $tids = $tid[0]->tid;
+    }
+  }
+  return $tids;
+}

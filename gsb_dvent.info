@@ -1,0 +1,11 @@
+name = GSB Dvent
+description = The GSB Dvent module
+core = 7.x
+package = GSB
+dependencies[] = gsb_feature_admission_event_ct
+
+; Information added by drupal.org packaging script on 2014-01-31
+version = "7.x-1.0"
+core = "7.x"
+project = "gsb_dvent"
+datestamp = "1491216729"
