@@ -23,16 +23,16 @@ function gsb_dvent_menu() {
     'page callback' => 'gsb_dvent_batch_import',
     'access arguments' => array('administer dvent'),
   );
-  $items['dvent_import_id/%'] = array(
-    'title' => 'GSB Import.',
+  $items['dvent-import-by-id'] = array(
+    'title' => 'GSB Import by ID.',
     'description' => 'Imports a single event by id',
-    'page callback' => 'gsb_dvent_event_import_id',
-    'page arguments' => array(1),
+    'page callback' => 'gsb_dvent_import_by_id',
     'access arguments' => array('administer dvent'),
+    'access callback' => TRUE,
   );
   $items['dvent_import_updated'] = array(
-    'title' => 'GSB Import Updated.',
-    'description' => 'Imports updated events',
+    'title' => 'GSB Importing Updated Events',
+    'description' => 'Importing updated events',
     'page callback' => 'gsb_dvent_import_updated',
     'access arguments' => array('administer dvent'),
   );
@@ -64,11 +64,39 @@ function gsb_dvent_rest_helper($url, $params = null, $verb = 'GET', $format = 'j
     $cparams['http']['header'] = "Authorization: $authorization";
   }
     if ($params !== null) {
-      $params = http_build_query($params);
+      $grant_type = $params['grant_type'];
+      $client_id  = $params['client_id'];
+      $client_secret  = $params['client_secret'];
+      $username  = $params['username'];
+      $password   = $params['password'];
+      //$params = http_build_query($params);
       if ($verb == 'POST') {
-      $cparams['http']['content'] = $params;
+        //$cparams['http']['content'] = $params;
+        //$url .= '?' . $params;
+         $url  .= '?grant_type='.$grant_type.'&client_id='.$client_id.'&client_secret='.$client_secret.'&username='.$username.'&password='.$password;
       }else {
-      $url .= '?' . $params;
+        //$url .= '?' . $params;
+        $url  .= '?';
+        $query = '';
+        if(!empty($params['SEC']))
+          $query .= 'SEC='.$params['SEC'];
+        if(!empty($params['SD'])) {
+          if($query != "")
+           $query .= '&';
+           $query .= 'SD='.$params['SD'];
+        }
+        if(!empty($params['LMD'])) {
+          if($query != "")
+          $query .= '&';
+          $query .= 'LMD='.$params['LMD'];
+        }
+        if(!empty($params['Id'])) {
+          if($query != "")
+          $query .= '&';
+          $query .= 'Id='.$params['Id'];
+        }
+        $url  .= $query;
+     
       }
     }
     $context = stream_context_create($cparams);
@@ -151,7 +179,7 @@ function gsb_dvent_batch_import() {
  */
 function gsb_dvent_batch_import_finished($success, $results, $operations) {
   if ($success) {
-    drupal_set_message('Dvent import is complete!');
+    drupal_set_message('Dvent import has been completed successfully!');
   }
   else {
     $error_operation = reset($operations);
@@ -171,7 +199,7 @@ function  gsb_dvent_search_events_bycondition($sales_force_response=null, $cond=
     $access_token = $sales_force_response->access_token;
      //https://<instance_url>/services/apexrest/Rest/v1/campaigns? SEC=yes&SD=TODAY
     if(!empty($sales_force_response) && !empty($event_id)) {
-      $response = gsb_dvent_rest_helper(
+        $response = gsb_dvent_rest_helper(
         "$instance_url/services/apexrest/Rest/v1/campaigns",
         $cond, 'GET', 'json',"OAuth $access_token");
         $arrEvent =  json_decode($response,true);
@@ -196,6 +224,7 @@ function gsb_dvent_batch_all_events_import($options, &$context) {
   $cond =  array('SEC'=> 'yes',
                  'SD' => 'GE(TODAY)');
   $response = gsb_dvent_rest_credentials();
+ 
   $limit = 5;
   if (!isset($context['sandbox']['progress'])) {
     $event_ids = gsb_dvent_search_events_bycondition($response,$cond);
@@ -228,7 +257,7 @@ function gsb_dvent_batch_all_events_import($options, &$context) {
 }
 
 /*
- * Import a single event by id
+ * Import a single event
  */
 function gsb_dvent_event_import_id($event) {
   $event_id = $event[0]['Id'];
@@ -248,13 +277,41 @@ function gsb_dvent_event_import_id($event) {
   return 'gsb_dvent_event_import_id completed';
 }
 
+
+/*
+ * Import a single event by id
+ */
+function gsb_dvent_import_by_id($event_id) {
+  
+  $response = gsb_dvent_rest_credentials();
+  $cond =  array('SEC' => 'yes',
+                'Id' => $event_id);
+  $event = gsb_dvent_search_events_bycondition($response, $cond,$event_id);
+  // Save the event if it already exists.
+  $query = new EntityFieldQuery();
+  $query->entityCondition('entity_type', 'node')
+    ->entityCondition('bundle', 'admission_event')
+    ->fieldCondition('field_item_id', 'value', (string)$event_id);
+  $entities = $query->execute();
+  if (!empty($entities['node'])) {
+     gsb_dvent_event_import($event);
+  }
+  else
+  {
+     gsb_dvent_event_import($event);
+  }
+  return 'Event with Id: '.$event_id.' has been imported successfully';
+}
+
 /**
  * Imports an Event
  */
 function gsb_dvent_event_import($event, $session = NULL) {
 
   $eventid =  $event[0]['Id'];
-
+  if($eventid == "")
+  return false;
+ 
   // Check if the event already exists
   $query = new EntityFieldQuery();
   $query->entityCondition('entity_type', 'node')
@@ -292,12 +349,20 @@ function gsb_dvent_event_import($event, $session = NULL) {
   $wrapper->field_item_id->set((string)$eventid);
   $event_status = trim($event[0]['Status']);
   $event_title  = $event[0]['event_name_for_email__c'];
+  $remove[] = "'";
+  $remove[] = '"';
+  //$remove[] = "-"; 
+  $event_title = str_replace( $remove, "", $event_title );
   $field_editorial_summary = '';
   $field_calendar_display  = $event[0]['show_event_on_calendar__c'];
 
   // Default to original link
   $field_link = $event[0]['registration_url__c'];
    // Convert the start and end time to UTC
+  if($event[0]['start_time__c'] == "")
+    $event[0]['start_time__c'] = "10:00 am";
+  if($event[0]['end_time__c'] == "")
+    $event[0]['end_time__c'] = "12:00 pm";
   $start_time = _gsb_dvent_convert_to_UTC($event[0]['StartDate']." ".$event[0]['start_time__c']);
   if($event[0]['EndDate'] != "")
   $end_time   = _gsb_dvent_convert_to_UTC($event[0]['EndDate']." ".$event[0]['end_time__c']);
@@ -405,31 +470,45 @@ function _gsb_dvent_convert_to_UTC($datetime) {
  * Import the updated events used for cron run
  */
 function gsb_dvent_import_updated() {
-  $client = gsb_cvent_login();
-
-  $start_time = date('Y-m-d');
+  
+    
+  $response = gsb_dvent_rest_credentials();
+  //print_r($response);
+  $end_time = date('Y-m-d',strtotime('+1 days'));
 
   $time = date('H:i:s');
-  $end_time = date('Y-m-d', strtotime('+1 days'));
+  $start_time = date('Y-m-d', strtotime('-1 days'));
 
-  $start_time .= 'T'.$time;
-  $end_time .= 'T'.$time;
-
-  $event_ids_updated = $client->GetUpdated('Event', $start_time, $end_time);
-
-  if (isset($event_ids_updated->GetUpdatedResult)) {
-    if (count($event_ids_updated->GetUpdatedResult->Id) == 1) {
-      $event_id = $event_ids_updated->GetUpdatedResult->Id;
-      gsb_dvent_event_import_id($event_id);
+  $start_time .= 'T00:00:00Z';
+  $end_time   .= 'T'.$time.'Z';
+  $date_range = 'GE('.$start_time.'),LE('.$end_time.')';
+  $cond =  array('SEC'=> 'yes',
+                 'LMD' => $date_range);
+  /*$cond =  array('SEC'=> 'yes',
+                 'LMD' => 'GE(2017-04-26T00:00:00Z),LE(2017-04-28T00:00:00Z)');*/
+  $event_ids_updated = gsb_dvent_search_events_bycondition($response,$cond);
+   $updated_ids = "";
+  if (isset($event_ids_updated)) {
+    if (count($event_ids_updated) == 1) {
+      $updated_ids = $event_ids_updated[0];
+       $cond =  array('SEC' => 'yes',
+                'Id' => $event_ids_updated[0]);
+      $event =  gsb_dvent_search_events_bycondition($response,$cond,$event_ids_updated[0]);
+      gsb_dvent_event_import($event);
     }
     else {
-      foreach ($event_ids_updated->GetUpdatedResult->Id as $event_id) {
-        gsb_dvent_event_import_id($event_id);
+      foreach ($event_ids_updated as $event_id) {
+        $cond =  array('SEC' => 'yes',
+                'Id' => $event_id);
+        $updated_ids .= " == ".$event_id." == ";
+        $event =  gsb_dvent_search_events_bycondition($response,$cond,$event_id);
+        gsb_dvent_event_import($event);
       }
     }
   }
-  return 'Updated events import complete';
+  return 'Updated all modifed events with date range: '.$start_time.' - '.$end_time.', Updated event Ids: '.$updated_ids;
 }
+
 
 /**
  * Get the tid from event planner lastname
@@ -445,3 +524,5 @@ function _gsb_dvent_get_tid_planner($planner_lastname, $vocab_name) {
   }
   return $tids;
 }
+
+
