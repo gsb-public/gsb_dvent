@@ -17,7 +17,7 @@ function gsb_dvent_menu() {
     'access arguments' => array('administer dvent'),
     'file' => 'gsb_dvent.admin.inc',
   );
-   $items['admin/config/gsb/dvent/import'] = array(
+  $items['admin/config/gsb/dvent/import'] = array(
     'title' => 'Start Import',
     'description' => 'GSB Dvent Import.',
     'page callback' => 'gsb_dvent_batch_import',
@@ -101,8 +101,9 @@ function gsb_dvent_rest_helper($url, $params = null, $verb = 'GET', $format = 'j
           $query .= 'Id='.$params['Id'];
         }
         $url  .= $query;
-
+     
       }
+
     }
     $context = stream_context_create($cparams);
     $fp = fopen($url, 'rb', false, $context);
@@ -229,7 +230,7 @@ function gsb_dvent_batch_all_events_import($options, &$context) {
   $cond =  array('SEC'=> 'yes',
                  'SD' => 'GE(TODAY)');
   $response = gsb_dvent_rest_credentials();
-
+  
   $limit = 5;
   if (!isset($context['sandbox']['progress'])) {
     $event_ids = gsb_dvent_search_events_bycondition($response,$cond);
@@ -289,7 +290,7 @@ function gsb_dvent_event_import_id($event) {
  * Import a single event by id
  */
 function gsb_dvent_import_by_id($event_id) {
-
+  
   $response = gsb_dvent_rest_credentials();
   $cond =  array('SEC' => 'yes',
                 'Id' => $event_id);
@@ -358,26 +359,32 @@ function gsb_dvent_event_import($event, $session = NULL) {
   $event_title  = trim($event[0]['event_name_for_email__c']);
   $remove[] = "'";
   $remove[] = '"';
-  //$remove[] = "-";
+  //$remove[] = "-"; 
   $event_title = str_replace( $remove, "", $event_title );
   $field_editorial_summary = '';
   $field_calendar_display  = trim($event[0]['show_event_on_calendar__c']);
 
   // Default to original link
   $field_link = trim($event[0]['registration_url__c']);
-   // Convert the start and end time to UTC
-  if(empty($event[0]['start_time__c']))
-    $event[0]['start_time__c'] = "00:00";
-  if(empty($event[0]['end_time__c'] == ""))
-    $event[0]['end_time__c'] = "00:00";
-  $start_time = _gsb_dvent_convert_to_UTC($event[0]['StartDate']." ".$event[0]['start_time__c']);
-  if($event[0]['EndDate'] != "")
-  $end_time   = _gsb_dvent_convert_to_UTC($event[0]['EndDate']." ".$event[0]['end_time__c']);
-  else
-  $end_time   = _gsb_dvent_convert_to_UTC($event[0]['StartDate']." ".$event[0]['end_time__c']);
 
-  //$start_time = trim($event[0]['StartDate']." ".substr($event[0]['start_time__c'],0,-3));
-  //$end_time   = trim($event[0]['StartDate']." ".substr($event[0]['end_time__c'],0,-3));
+
+   // Convert the start and end time to UTC
+   if (isset($event[0]['start_time__c']) && !empty($event[0]['start_time__c'])){
+      $stime = substr($event[0]['start_time__c'],0,-3);
+   }
+   else
+      $stime = "00:00";
+
+    if (isset($event[0]['end_time__c']) && !empty($event[0]['end_time__c'])){
+      $etime = substr($event[0]['end_time__c'],0,-3);
+    }
+    else
+      $etime = "00:00";
+    $start_time = trim($event[0]['StartDate']." ".$stime);
+    $end_time   = trim($event[0]['StartDate']." ".$etime);
+    $start_time = _gsb_dvent_convert_to_UTC($start_time);
+    $end_time   = _gsb_dvent_convert_to_UTC($end_time);
+
   
   // Set all the wrapper values
   $wrapper->field_event_status->set($event_status);
@@ -431,16 +438,16 @@ function gsb_dvent_event_import($event, $session = NULL) {
   if(isset($event[0]['country_name__c']) && !empty($event[0]['country_name__c'])){
     $country_code = _gsb_dvent_convert_country_name_to_country_code('United States');
     if($country_code == "")
-    $country_code = 'US';
+    $country_code = 'US'; 
     $field_collection_wrapper->field_address->country->set((string)$country_code);
   }
-
+  
   $field_collection_wrapper->field_address->locality->set((string)trim($event[0]['city__c']));
   $field_collection_wrapper->field_address->administrative_area->set((string)trim($event[0]['state_name__c']) );
   if ($event->CountryCode == 'US') {
     $field_collection_wrapper->field_address->administrative_area->set((string)$event[0]['StateCode']);
   }
-
+  
   $field_collection_wrapper->save();
 
   // Finally save the entity
@@ -481,19 +488,17 @@ function _gsb_dvent_convert_to_UTC($datetime) {
  * Import the updated events used for cron run
  */
 function gsb_dvent_import_updated() {
-
-
+  
+    
   $response = gsb_dvent_rest_credentials();
-  //print_r($response);
   $end_time = date('Y-m-d',strtotime('+1 days'));
-
   $time = date('H:i:s');
   $start_time = date('Y-m-d', strtotime('-1 days'));
-
   $start_time .= 'T00:00:00Z';
   $end_time   .= 'T'.$time.'Z';
   $date_range = 'GE('.$start_time.'),LE('.$end_time.')';
   $cond =  array('SEC'=> 'yes',
+                 'SD' => 'GE(TODAY)',
                  'LMD' => $date_range);
   /*$cond =  array('SEC'=> 'yes',
                  'LMD' => 'GE(2017-04-26T00:00:00Z),LE(2017-04-28T00:00:00Z)');*/
@@ -542,4 +547,3 @@ function _gsb_dvent_convert_country_name_to_country_code($country) {
   $countries = country_get_list();
   return array_search(strtolower($country), array_map('strtolower', $countries));
 }
-
