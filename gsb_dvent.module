@@ -244,7 +244,6 @@ function gsb_dvent_batch_all_events_import($options, &$context) {
   // Display a progress message...
   $current_chunk = $context['sandbox']['current_chunk'];
   foreach ($context['sandbox']['event_ids'][$current_chunk] as $event_id) {
-   // $cond =  array('Id' => $event_id);
     $cond =  array('SEC'=> 'yes',
                  'Id' => $event_id);
     $event = gsb_dvent_search_events_bycondition($response, $cond,$event_id);
@@ -369,14 +368,38 @@ function gsb_dvent_event_import($event, $session = NULL) {
 
 
    // Convert the start and end time to UTC
-   if (isset($event[0]['start_time__c']) && !empty($event[0]['start_time__c'])){
-      $stime = substr($event[0]['start_time__c'],0,-3);
+   // Convert the start and end time to UTC
+   if (isset($event[0]['start_time__c']) && !empty($event[0]['start_time__c'])) {
+      $pmstr = trim(substr($event[0]['start_time__c'], -2)); 
+      if($pmstr == 'pm' || $pmstr == 'PM' || $pmstr == 'am' || $pmstr == 'AM') {
+        $stime = substr($event[0]['start_time__c'],0,-3);
+        if($pmstr == 'pm' || $pmstr == 'PM')
+        {
+          $stime_expld = explode(":", $stime);
+          if($stime_expld[0] < 12) {
+            $stime_expld[0] = 12 + $stime_expld[0];
+            $stime = $stime_expld[0].":".$stime_expld[1];
+          }
+        }
+      }
    }
    else
       $stime = "00:00";
 
-    if (isset($event[0]['end_time__c']) && !empty($event[0]['end_time__c'])){
-      $etime = substr($event[0]['end_time__c'],0,-3);
+    if (isset($event[0]['end_time__c']) && !empty($event[0]['end_time__c'])) {
+      $pmstr = trim(substr($event[0]['end_time__c'], -2)); 
+      if($pmstr == 'pm' || $pmstr == 'PM' || $pmstr == 'am' || $pmstr == 'AM') {
+        $etime = substr($event[0]['end_time__c'],0,-3);
+        if($pmstr == 'pm' || $pmstr == 'PM')
+        {
+          $etime_expld = explode(":", $etime);
+          if($etime_expld[0] < 12) {
+            $etime_expld[0] = 12 + $etime_expld[0];
+            $etime = $etime_expld[0].":".$etime_expld[1];
+          }
+        }
+      }
+      
     }
     else
       $etime = "00:00";
@@ -384,7 +407,6 @@ function gsb_dvent_event_import($event, $session = NULL) {
     $end_time   = trim($event[0]['StartDate']." ".$etime);
     $start_time = _gsb_dvent_convert_to_UTC($start_time);
     $end_time   = _gsb_dvent_convert_to_UTC($end_time);
-
   
   // Set all the wrapper values
   $wrapper->field_event_status->set($event_status);
@@ -489,7 +511,6 @@ function _gsb_dvent_convert_to_UTC($datetime) {
  */
 function gsb_dvent_import_updated() {
   
-    
   $response = gsb_dvent_rest_credentials();
   $end_time = date('Y-m-d',strtotime('+1 days'));
   $time = date('H:i:s');
@@ -498,12 +519,10 @@ function gsb_dvent_import_updated() {
   $end_time   .= 'T'.$time.'Z';
   $date_range = 'GE('.$start_time.'),LE('.$end_time.')';
   $cond =  array('SEC'=> 'yes',
-                 'SD' => 'GE(TODAY)',
                  'LMD' => $date_range);
-  /*$cond =  array('SEC'=> 'yes',
-                 'LMD' => 'GE(2017-04-26T00:00:00Z),LE(2017-04-28T00:00:00Z)');*/
+  // 'SD' => 'GE(TODAY)',
   $event_ids_updated = gsb_dvent_search_events_bycondition($response,$cond);
-   $updated_ids = "";
+  $updated_ids = "";
   if (isset($event_ids_updated)) {
     if (count($event_ids_updated) == 1) {
       $updated_ids = $event_ids_updated[0];
@@ -524,7 +543,6 @@ function gsb_dvent_import_updated() {
   }
   return 'Updated all modifed events with date range: '.$start_time.' - '.$end_time.', Updated event Ids: '.$updated_ids;
 }
-
 
 /**
  * Get the tid from event planner lastname
