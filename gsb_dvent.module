@@ -368,7 +368,6 @@ function gsb_dvent_event_import($event, $session = NULL) {
 
 
    // Convert the start and end time to UTC
-   // Convert the start and end time to UTC
    if (isset($event[0]['start_time__c']) && !empty($event[0]['start_time__c'])) {
       $pmstr = trim(substr($event[0]['start_time__c'], -2)); 
       if($pmstr == 'pm' || $pmstr == 'PM' || $pmstr == 'am' || $pmstr == 'AM') {
@@ -403,8 +402,14 @@ function gsb_dvent_event_import($event, $session = NULL) {
     }
     else
       $etime = "00:00";
+
     $start_time = trim($event[0]['StartDate']." ".$stime);
+
+    if(!empty($event[0]['EndDate']) )
+    $end_time   =  trim($event[0]['EndDate']." ".$etime);
+    else
     $end_time   = trim($event[0]['StartDate']." ".$etime);
+
     $start_time = _gsb_dvent_convert_to_UTC($start_time);
     $end_time   = _gsb_dvent_convert_to_UTC($end_time);
   
