@@ -371,7 +371,7 @@ function gsb_dvent_event_import($event, $session = NULL) {
    if (isset($event[0]['start_time__c']) && !empty($event[0]['start_time__c'])) {
       $pmstr = trim(substr($event[0]['start_time__c'], -2)); 
       if($pmstr == 'pm' || $pmstr == 'PM' || $pmstr == 'am' || $pmstr == 'AM') {
-        $stime = substr($event[0]['start_time__c'],0,-3);
+        $stime = substr($event[0]['start_time__c'],0,-2);
         if($pmstr == 'pm' || $pmstr == 'PM')
         {
           $stime_expld = explode(":", $stime);
@@ -388,7 +388,7 @@ function gsb_dvent_event_import($event, $session = NULL) {
     if (isset($event[0]['end_time__c']) && !empty($event[0]['end_time__c'])) {
       $pmstr = trim(substr($event[0]['end_time__c'], -2)); 
       if($pmstr == 'pm' || $pmstr == 'PM' || $pmstr == 'am' || $pmstr == 'AM') {
-        $etime = substr($event[0]['end_time__c'],0,-3);
+        $etime = substr($event[0]['end_time__c'],0,-2);
         if($pmstr == 'pm' || $pmstr == 'PM')
         {
           $etime_expld = explode(":", $etime);
