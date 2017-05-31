@@ -463,7 +463,7 @@ function gsb_dvent_event_import($event, $session = NULL) {
  
   $field_collection_wrapper->field_event_location_type->set((string)trim($event[0]['admissions_event_category__c']) );
   if(isset($event[0]['country_name__c']) && !empty($event[0]['country_name__c'])){
-    $country_code = _gsb_dvent_convert_country_name_to_country_code('United States');
+    $country_code = _gsb_dvent_convert_country_name_to_country_code( $event[0]['country_name__c']);
     if($country_code == "")
     $country_code = 'US'; 
     $field_collection_wrapper->field_address->country->set((string)$country_code);
