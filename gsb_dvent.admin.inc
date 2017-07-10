@@ -54,6 +54,17 @@ function gsb_dvent_settings_form($form, $form_state) {
       '#default_value' =>variable_get('login_url'),
       '#required' => TRUE,
     );
-   
-  return system_settings_form($form, $form_state);
+    $form['salesforce']['filter_ge'] = array(
+      '#title'=>'Greater Than Equal Filter',
+      '#type' => 'textfield',
+      '#default_value' =>variable_get('filter_ge'),
+      '#required' => TRUE,
+    );
+    $form['salesforce']['filter_le'] = array(
+      '#title'=>'Less Than Equal Filter',
+      '#type' => 'textfield',
+      '#default_value' =>variable_get('filter_le'),
+      '#required' => TRUE,
+    );   
+    return system_settings_form($form, $form_state);
 }
