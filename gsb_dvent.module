@@ -1,8 +1,7 @@
 <?php
-
 /**
  * @file
- * Contains hook implementations and helper functions for GSB Dvent
+ * Contains hook implementations and helper functions for GSB MBA/MSx events
  */
 
 /**
@@ -22,13 +21,13 @@ function gsb_dvent_menu() {
     'description' => 'GSB Dvent MBA Import.',
     'page callback' => 'gsb_dvent_batch_import',
     'access arguments' => array('administer dvent'),
-  );*/
+  );
   $items['admin/config/gsb/dvent/msximport'] = array(
     'title' => 'MSx Import',
     'description' => 'GSB Dvent MSx Import.',
     'page callback' => 'gsb_dvent_batch_import',
     'access arguments' => array('administer dvent'),
-  );
+  );*/
   $items['dvent-import-by-id'] = array(
     'title' => 'GSB Import by ID.',
     'description' => 'Imports a single event by id',
@@ -70,7 +69,7 @@ function gsb_dvent_permission() {
 }
 
 /*
- * helper function for rest api
+ * helper function for salesforce rest api
  */
 function gsb_dvent_rest_helper($url, $params = null, $verb = 'GET', $format = 'json', $authorization = null) {
   $cparams = array(
@@ -153,7 +152,7 @@ function gsb_dvent_rest_helper($url, $params = null, $verb = 'GET', $format = 'j
 }
 
 /* 
-  Function for fetching the rest credentials
+  Function for fetching rest api credentials
  */
 function gsb_dvent_rest_credentials() {
     $grant_type   = trim(variable_get('grant_type'));
@@ -163,27 +162,38 @@ function gsb_dvent_rest_credentials() {
     $sf_password  = trim(variable_get('sf_password'));
     $sf_token     = trim(variable_get('sf_token'));
     $login_url    = trim(variable_get('login_url'));
-    $response     = gsb_dvent_rest_helper( $login_url, array(
-                    'grant_type' => $grant_type,
-                    'client_id'  => $client_id,
-                    'client_secret'=> $client_secret,
-                    'username' => $sf_username,
-                    'password' => $sf_password.$sf_token 
-                  ), 'POST'
-                ); 
-    return $response;
+    $response     = false;
+    try{
+      $response     = gsb_dvent_rest_helper( $login_url, array(
+                      'grant_type' => $grant_type,
+                      'client_id'  => $client_id,
+                      'client_secret'=> $client_secret,
+                      'username' => $sf_username,
+                      'password' => $sf_password.$sf_token 
+                    ), 'POST'
+                  ); 
+      return $response;
+   }
+   catch (Exception $e) 
+   {
+      watchdog('gsb_dvent_rest_credentials','Salesforce Api Error: '.$e);
+      return $response;
+   }
+
 }
 
 /**
  * Implements hook_cron().
  */
 function gsb_dvent_cron() {
+  //MBA Cron method
   gsb_dvent_import_updated();
+  //MSx Cron Method
   gsb_dvent_msxevent_updated();
 }
 
 /**
- * The batch import hook.
+ * The batch import hook. Its used only for initial import of events.
  */
 
 function gsb_dvent_batch_import() {
@@ -220,7 +230,7 @@ function gsb_dvent_batch_import_finished($success, $results, $operations) {
 }
 
 /*
- * Search all events based on condition
+ * Search all events based on filter condition. 
  */
 function  gsb_dvent_search_events_bycondition($sales_force_response=null, $cond=null, $event_id=null) {
     $instance_url = $sales_force_response->instance_url;
@@ -246,14 +256,12 @@ function  gsb_dvent_search_events_bycondition($sales_force_response=null, $cond=
 }
 
 /*
- * Gets upcoming events
+ * Importing all events using batch process
  */
 function gsb_dvent_batch_all_events_import($options, &$context) {
   $filter_ge = trim(variable_get('filter_ge'));
   $cond =  array('SEC'=> 'yes',
                  'SD' => $filter_ge.'(TODAY)');
-  /*$cond =  array('SEC'=> 'yes',
-                 'SD' => 'GE(TODAY)');*/
   $response = gsb_dvent_rest_credentials();
   
   $limit = 5;
@@ -289,7 +297,7 @@ function gsb_dvent_batch_all_events_import($options, &$context) {
 }
 
 /*
- * Import a single event
+ * Import a single event, usinng for batch process
  */
 function gsb_dvent_event_import_id($event) {
   $event_id = $event[0]['Id'];
@@ -310,7 +318,7 @@ function gsb_dvent_event_import_id($event) {
 }
 
 /*
- * Import a single event by id
+ * Import a single MBA event using event id
  */
 function gsb_dvent_import_by_id($event_id) {
   
@@ -318,7 +326,8 @@ function gsb_dvent_import_by_id($event_id) {
   $cond =  array('SEC' => 'yes',
                 'Id' => $event_id);
   $event = gsb_dvent_search_events_bycondition($response, $cond,$event_id);
-  // Save the event if it already exists.
+  $message = '';
+  // fetch the event if already exists.
   if(!empty($event)) {
       $query = new EntityFieldQuery();
       $query->entityCondition('entity_type', 'node')
@@ -326,13 +335,33 @@ function gsb_dvent_import_by_id($event_id) {
         ->fieldCondition('field_item_id', 'value', (string)$event_id);
       $entities = $query->execute();
       if (!empty($entities['node'])) {
-         gsb_dvent_event_import($event);
+         //gsb_dvent_event_import($event);
+         watchdog('gsb_dvent_import_by_id','Node Exist');
+         try{
+          $res = gsb_dvent_event_import($event);
+          watchdog('gsb_dvent_import_by_id','MBA Event Success ID- '.$event_id.' Node Id- '.$res->nid);
+           $message = 'Event with Id: '.$event_id.' has been imported successfully';
+        }
+        catch (Exception $e) {
+          watchdog('gsb_dvent_import_by_id','MBA Event Error ID- '.$event_id.' Error- '.$e);
+          $message = 'Event with Id: '.$event_id.' has failed to import. Error- '.$e;
+        }
       }
       else
       {
-         gsb_dvent_event_import($event);
+         //gsb_dvent_event_import($event);
+        watchdog('gsb_dvent_import_by_id','Creating new Node');
+        try{
+          $res = gsb_dvent_event_import($event);
+          watchdog('gsb_dvent_import_by_id','MBA Event Success ID- '.$event_id.' Node Id- '.$res->nid);
+          $message = 'Event with Id: '.$event_id.' has been imported successfully';
+        }
+        catch (Exception $e) {
+          watchdog('gsb_dvent_import_by_id','MBA Event Error ID- '.$event_id.' Error- '.$e);
+          $message = 'Event with Id: '.$event_id.' has failed to import. Error- '.$e;
+        }
       }
-      return 'Event with Id: '.$event_id.' has been imported successfully';
+      return $message;
   } 
   else {
        return 'Event with Id: '.$event_id.' data not found in Salesforce!';
@@ -340,7 +369,7 @@ function gsb_dvent_import_by_id($event_id) {
 }
 
 /**
- * Imports an Event
+ * Using event data from slaesforce, create/update MBA Admission event in Drupal
  */
 function gsb_dvent_event_import($event, $session = NULL) {
 
@@ -356,6 +385,7 @@ function gsb_dvent_event_import($event, $session = NULL) {
   if (!empty($entities['node'])) {
     $nid = array_keys($entities['node']);
     $node = node_load(array_shift($nid));
+    watchdog('gsb_dvent_event_import','MBA Node ID Exist '.$node->nid);
   }
   else {
     $field_values = array(
@@ -368,13 +398,15 @@ function gsb_dvent_event_import($event, $session = NULL) {
     $node = entity_create('node', $field_values);
     $node->workbench_moderation_state_new = workbench_moderation_state_published();
     node_save($node);
-
+    watchdog('gsb_dvent_event_import','MBA Node ID New '.$node->nid);
     // Set the workbench access
     $node->workbench_access['access_scheme'] = 'taxonomy'; // or 'menu'
     $workbench_section_tid  = _gsb_dvent_get_tid_planner('MBA', 'workbench_sections');
     $node->workbench_access = array($workbench_section_tid); // 12401 MBA id
     workbench_access_node_update($node);
   }
+
+  $node->workbench_moderation['updating_live_revision'] = 1;
   // update the admission event node information
   $wrapper = entity_metadata_wrapper('node', $node);
   $wrapper->field_event_detail->set(1);
@@ -393,121 +425,100 @@ function gsb_dvent_event_import($event, $session = NULL) {
 
   // Default to original link
   $field_link = trim($event[0]['registration_url__c']);
-
-
    // Convert the start and end time to UTC
    if (isset($event[0]['start_time__c']) && !empty($event[0]['start_time__c'])) {
-      $pmstr = trim(substr($event[0]['start_time__c'], -2)); 
-      if($pmstr == 'pm' || $pmstr == 'PM' || $pmstr == 'am' || $pmstr == 'AM') {
-        $stime = substr($event[0]['start_time__c'],0,-2);
-        if($pmstr == 'pm' || $pmstr == 'PM')
-        {
-          $stime_expld = explode(":", $stime);
-          if($stime_expld[0] < 12) {
-            $stime_expld[0] = 12 + $stime_expld[0];
-            $stime = $stime_expld[0].":".$stime_expld[1];
-          }
-        }
-      }
+      $stime = _gsb_dvent_get_converted_time($event[0]['start_time__c']);
    }
    else
       $stime = "00:00";
 
-    if (isset($event[0]['end_time__c']) && !empty($event[0]['end_time__c'])) {
-      $pmstr = trim(substr($event[0]['end_time__c'], -2)); 
-      if($pmstr == 'pm' || $pmstr == 'PM' || $pmstr == 'am' || $pmstr == 'AM') {
-        $etime = substr($event[0]['end_time__c'],0,-2);
-        if($pmstr == 'pm' || $pmstr == 'PM')
-        {
-          $etime_expld = explode(":", $etime);
-          if($etime_expld[0] < 12) {
-            $etime_expld[0] = 12 + $etime_expld[0];
-            $etime = $etime_expld[0].":".$etime_expld[1];
-          }
-        }
-      }
-      
-    }
-    else
+   if (isset($event[0]['end_time__c']) && !empty($event[0]['end_time__c'])) {
+      $etime = _gsb_dvent_get_converted_time($event[0]['end_time__c']);
+   }
+   else
       $etime = "00:00";
 
-    $start_time = trim($event[0]['StartDate']." ".$stime);
-
-    if(!empty($event[0]['EndDate']) )
-    $end_time   =  trim($event[0]['EndDate']." ".$etime);
-    else
-    $end_time   = trim($event[0]['StartDate']." ".$etime);
-
-    $start_time = _gsb_dvent_convert_to_UTC($start_time);
-    $end_time   = _gsb_dvent_convert_to_UTC($end_time);
+    //$start_time = trim($event[0]['StartDate']." ".$stime);
+    $start_time = trim($event[0]['StartDate']);
+    if(!empty($event[0]['EndDate']) ){
+      //$end_time =  trim($event[0]['EndDate']." ".$etime);
+      $end_time =  trim($event[0]['EndDate']);
+    }    
+    else {
+      //$end_time = trim($event[0]['StartDate']." ".$etime);
+      $end_time = $start_time;
+    }
+    $start_time_from_api = $start_time." ".$event[0]['start_time__c'];
+    $end_time_from_api   = $end_time." ".$event[0]['end_time__c'];
+    watchdog('gsb_dvent_event_import','Salesforce Start DateTime: '.$start_time_from_api.' End DateTime: '.$end_time_from_api);
+    $start_time = _gsb_dvent_convert_to_UTC($start_time, $stime, $start_time_from_api);
+    $end_time   = _gsb_dvent_convert_to_UTC($end_time,$etime,$end_time_from_api);
   
-  // Set all the wrapper values
-  $wrapper->field_event_status->set($event_status);
-  $wrapper->title->set((string)$event_title);
-  $wrapper->field_editorial_summary->set((string)$field_editorial_summary);
-  $wrapper->field_calendar_display->set($field_calendar_display);
-  if (valid_url($field_link, TRUE)) {
-    $wrapper->field_link_single->url->set($field_link);
-    $wrapper->field_link_single->attributes->set(array('target' => '_blank'));
-  }
+    // Set all the wrapper values
+    $wrapper->field_event_status->set($event_status);
+    $wrapper->title->set((string)$event_title);
+    $wrapper->field_editorial_summary->set((string)$field_editorial_summary);
+    $wrapper->field_calendar_display->set($field_calendar_display);
+    if (valid_url($field_link, TRUE)) {
+      $wrapper->field_link_single->url->set($field_link);
+      $wrapper->field_link_single->attributes->set(array('target' => '_blank'));
+    }
+    // Set the event start and end date
+    $wrapper->field_event_date[0]->set(array(
+      'value' => $start_time,
+      'value2' => $end_time,
+    ));
 
-  // Set the event start and end date
-  $wrapper->field_event_date[0]->set(array(
-    'value' => $start_time,
-    'value2' => $end_time,
-  ));
+    // Get drupal timezone from taxonomy mapping
+    $timezone_term = taxonomy_get_term_by_name((string)$event[0]['calendar_region__c'], 'timezone');
+    $timezone_term = array_values($timezone_term);
+    if (!empty($timezone_term)) {
+      $wrapper->field_time_zone->set($timezone_term[0]->field_drupal_timezone['und'][0]['value']);
+    }
+    // Set the event category
+    $cvent_event_types = explode(', ', $event[0]['event_type_for_calendar__c']);
+    $term_merge = array();
+    foreach ($cvent_event_types as $cvent_event_type) {
+      $term = taxonomy_get_term_by_name($cvent_event_type, 'event_category');
+      $term = array_values($term);
+      $term_merge = array_merge($term_merge, $term);
+      $wrapper->field_event_category->set($term_merge);
+    }
 
-  // Get drupal timezone from taxonomy mapping
-  $timezone_term = taxonomy_get_term_by_name((string)$event[0]['calendar_region__c'], 'timezone');
-  $timezone_term = array_values($timezone_term);
-  if (!empty($timezone_term)) {
-    $wrapper->field_time_zone->set($timezone_term[0]->field_drupal_timezone['und'][0]['value']);
-  }
-
-  // Set the event category
-  $cvent_event_types = explode(', ', $event[0]['event_type_for_calendar__c']);
-  $term_merge = array();
-  foreach ($cvent_event_types as $cvent_event_type) {
-    $term = taxonomy_get_term_by_name($cvent_event_type, 'event_category');
+    // Set the region taxonomy
+    $term = taxonomy_get_term_by_name((string)$event[0]['calendar_region__c'], 'region');
     $term = array_values($term);
-    $term_merge = array_merge($term_merge, $term);
-    $wrapper->field_event_category->set($term_merge);
-  }
+    $wrapper->field_region->set($term);
 
-  // Set the region taxonomy
-  $term = taxonomy_get_term_by_name((string)$event[0]['calendar_region__c'], 'region');
-  $term = array_values($term);
-  $wrapper->field_region->set($term);
+    // Set different event location fields
+    $field_collection = $wrapper->field_event_location->raw();
 
-  // Set different event location fields
-  $field_collection = $wrapper->field_event_location->raw();
-
-  if(empty($field_collection)) {
-    $field_collection_wrapper = _gsb_dvent_create_fc_wrapper('node', $node, 'field_event_location');
-  }
-  else {
-    $field_collection_wrapper = entity_metadata_wrapper('field_collection_item', $wrapper->field_event_location[0]->value());
-  }
- 
-  $field_collection_wrapper->field_event_location_type->set((string)trim($event[0]['admissions_event_category__c']) );
-  if(isset($event[0]['country_name__c']) && !empty($event[0]['country_name__c'])){
-    $country_code = _gsb_dvent_convert_country_name_to_country_code( $event[0]['country_name__c']);
-    if($country_code == "")
-    $country_code = 'US'; 
-    $field_collection_wrapper->field_address->country->set((string)$country_code);
-  }
+    if(empty($field_collection)) {
+      $field_collection_wrapper = _gsb_dvent_create_fc_wrapper('node', $node, 'field_event_location');
+    }
+    else {
+      $field_collection_wrapper = entity_metadata_wrapper('field_collection_item', $wrapper->field_event_location[0]->value());
+    }
+   
+    $field_collection_wrapper->field_event_location_type->set((string)trim($event[0]['admissions_event_category__c']) );
+    if(isset($event[0]['country_name__c']) && !empty($event[0]['country_name__c'])){
+      $country_code = _gsb_dvent_convert_country_name_to_country_code( $event[0]['country_name__c']);
+      if($country_code == "")
+      $country_code = 'US'; 
+      $field_collection_wrapper->field_address->country->set((string)$country_code);
+    }
+    
+    $field_collection_wrapper->field_address->locality->set((string)trim($event[0]['city__c']));
+    $field_collection_wrapper->field_address->administrative_area->set((string)trim($event[0]['state_name__c']) );
+    if ($country_code == 'US') {
+      $field_collection_wrapper->field_address->administrative_area->set((string)trim($event[0]['state_name__c']));
+    }
+    
+    $field_collection_wrapper->save();
+    // Finally save the entity
+    $wrapper->save();
   
-  $field_collection_wrapper->field_address->locality->set((string)trim($event[0]['city__c']));
-  $field_collection_wrapper->field_address->administrative_area->set((string)trim($event[0]['state_name__c']) );
-  if ($country_code == 'US') {
-    $field_collection_wrapper->field_address->administrative_area->set((string)trim($event[0]['state_name__c']));
-  }
-  
-  $field_collection_wrapper->save();
-
-  // Finally save the entity
-  $wrapper->save();
-
+    return $node;
 }
 
 /**
@@ -526,7 +537,7 @@ function _gsb_dvent_create_fc_wrapper($entity_type, $node, $field_collection_nam
 /*
  * Convert to UTC time
  */
-function _gsb_dvent_convert_to_UTC($datetime) {
+function _gsb_dvent_convert_to_UTC($date=null,$time=null,$datetime_actual=null) {
   /*$date = new DateObject($date , 'America/Los_Angeles', DATE_FORMAT_ISO);
   date_timezone_set($date, new DateTimeZone('UTC'));
   $date = date_format($date, DATE_FORMAT_DATETIME);
@@ -534,22 +545,38 @@ function _gsb_dvent_convert_to_UTC($datetime) {
   $tz_from = 'America/Los_Angeles';
   $tz_to = 'UTC';
   $format = 'Y-m-d H:i:s';
-  $dt = new DateTime($datetime, new DateTimeZone($tz_from));
-  $dt->setTimeZone(new DateTimeZone($tz_to));
-  return $dt->format(DATE_FORMAT_DATETIME);
+  try {
+    $dt = new DateTime($date.' '.$time, new DateTimeZone($tz_from));
+    $dt->setTimeZone(new DateTimeZone($tz_to));
+    $convert_date = $dt->format(DATE_FORMAT_DATETIME);
+  }
+  catch(Exception $e) {
+    //if the time is invalid format, setting the date with minimum value
+    watchdog('gsb_dvent_convert_to_UTC','Invalid Date Time format: '.$datetime_actual.' Error:- '.$e);
+    $date  = "1970-01-01 00:00";
+    $dt    = new DateTime($date, new DateTimeZone($tz_from));
+    $dt->setTimeZone(new DateTimeZone($tz_to));
+    $convert_date = $dt->format(DATE_FORMAT_DATETIME);
+  }
+  return $convert_date;
 }
 
 /*
- * Import the updated mba events used for cron run
+ * MBA cron method for to create/update Admission event
  */
 function gsb_dvent_import_updated() {
-  
+  //Connect with salesforce api and fetch instance_url, access_token
   $response = gsb_dvent_rest_credentials();
-  $end_time = date('Y-m-d',strtotime('+1 days'));
-  $time = date('H:i:s');
-  $start_time = date('Y-m-d', strtotime('-1 days'));
-  $start_time .= 'T00:00:00Z';
+
+  $current_time   = date("Y-m-d H:i:s");
+  $start_old_time = date('Y-m-d H:i:s',strtotime('-4 hour',strtotime($current_time)));
+  $end_time   = date('Y-m-d');
+  $time       = date('H:i:s');
+  $start_time  = date('Y-m-d', strtotime($start_old_time));
+  $start_time1 = date('H:i:s', strtotime($start_old_time));
+  $start_time .= 'T'.$start_time1.'Z';
   $end_time   .= 'T'.$time.'Z';
+
   $filter_ge   = trim(variable_get('filter_ge'));
   $filter_le   = trim(variable_get('filter_le'));
   $date_range  = $filter_ge.'('.$start_time.'),'.$filter_le.'('.$end_time.')';
@@ -557,32 +584,31 @@ function gsb_dvent_import_updated() {
   $cond =  array('SEC'=> 'yes',
                  'LMD' => $date_range);
   $message = "";
-  watchdog('MBA Event Cron','MBA Cron Job execution started');
+  watchdog('gsb_dvent_import_updated','MBA Cron Job execution started');
   $event_ids_updated = gsb_dvent_search_events_bycondition($response,$cond);
-  $updated_ids = "";
+  $updated_ids = $error_ids = "";
   if (isset($event_ids_updated)) {
-    if (count($event_ids_updated) == 1) {
-      $updated_ids = $event_ids_updated[0];
-       $cond =  array('SEC' => 'yes',
-                'Id' => $event_ids_updated[0]);
-      $event =  gsb_dvent_search_events_bycondition($response,$cond,$event_ids_updated[0]);
-      gsb_dvent_event_import($event);
-    }
-    else {
-      foreach ($event_ids_updated as $event_id) {
+    foreach ($event_ids_updated as $event_id) {
         $cond =  array('SEC' => 'yes',
-                'Id' => $event_id);
-        $updated_ids .= " == ".$event_id." == ";
+                       'Id' => $event_id);
+        //$updated_ids .= " == ".$event_id." == ";
         $event =  gsb_dvent_search_events_bycondition($response,$cond,$event_id);
-        gsb_dvent_event_import($event);
-      }
+        try{
+          $res = gsb_dvent_event_import($event);
+          $updated_ids .= " == ".$event_id." == ";
+          watchdog('gsb_dvent_import_updated','MBA Event Success ID- '.$event_id.' Node Id- '.$res->nid);
+        }
+        catch (Exception $e) {
+          $error_ids .= " == ".$event_id." == ";
+          watchdog('gsb_dvent_import_updated','MBA Event Error ID- '.$event_id.' Error- '.$e);
+        }
     }
-    $message = 'Updated or Created all modifed mba events with date range: '.$start_time.' - '.$end_time.', Updated event Ids: '.$updated_ids;
-    watchdog('MBA Event Cron',$message);
+    $message = 'Executed MBA events with date range: '.$start_time.' - '.$end_time.', Success event Ids: '.$updated_ids.' Error event Ids: '.$error_ids;
+    watchdog('gsb_dvent_import_updated',$message);
   }
   else {
-    $message = 'No MBA events for to update or create with date range: '.$start_time.' - '.$end_time;
-    watchdog('MBA Event Cron',$message);
+   $message = 'No MBA events for to update/create with date range: '.$start_time.' - '.$end_time;
+    watchdog('gsb_dvent_import_updated',$message);
   }
   return $message;
 }
@@ -602,6 +628,9 @@ function _gsb_dvent_get_tid_planner($planner_lastname, $vocab_name) {
   return $tids;
 }
 
+/**
+ * Get the country code from country name.
+ */
 function _gsb_dvent_convert_country_name_to_country_code($country) {
   // Necessary for country_get_list().
   require_once DRUPAL_ROOT . '/includes/locale.inc';
@@ -610,15 +639,19 @@ function _gsb_dvent_convert_country_name_to_country_code($country) {
 }
 
 /*
- * Import the updated msx events used for cron run
+ * MSx cron method for to create/update msx events in drupal
  */
 function gsb_dvent_msxevent_updated() {
-  
+  //Connect with salesforce api and fetch instance_url, access_token
   $response = gsb_dvent_rest_credentials();
-  $end_time = date('Y-m-d',strtotime('+1 days'));
+  //creating date range format
+  $current_time   = date("Y-m-d H:i:s");
+  $start_old_time = date('Y-m-d H:i:s',strtotime('-4 hour',strtotime($current_time)));
+  $end_time = date('Y-m-d');
   $time = date('H:i:s');
-  $start_time = date('Y-m-d', strtotime('-1 days'));
-  $start_time .= 'T00:00:00Z';
+  $start_time  = date('Y-m-d', strtotime($start_old_time));
+  $start_time1 = date('H:i:s', strtotime($start_old_time));
+  $start_time .= 'T'.$start_time1.'Z';
   $end_time   .= 'T'.$time.'Z';
   $filter_ge   = trim(variable_get('filter_ge'));
   $filter_le   = trim(variable_get('filter_le'));
@@ -627,38 +660,39 @@ function gsb_dvent_msxevent_updated() {
   $cond =  array('SMSXE'=> 'yes',
                  'LMD' => $date_range);
   $event_ids_updated = gsb_dvent_search_events_bycondition($response,$cond);
-  watchdog('MSx Event Cron','MSx Cron Job execution started');
+  watchdog('gsb_dvent_msxevent_updated','MSx Cron Job execution started');
   $message     = "";
-  $updated_ids = "";
+  $updated_ids = $error_ids = "";
   if (isset($event_ids_updated)) {
-    if (count($event_ids_updated) == 1) {
-      $updated_ids = $event_ids_updated[0];
-      $cond =  array('SMSXE' => 'yes',
-                      'Id'    => $event_ids_updated[0]);
-      $event =  gsb_dvent_search_events_bycondition($response,$cond,$event_ids_updated[0]);
-      gsb_dvent_msx_event_import($event);
-    }
-    else {
-      foreach ($event_ids_updated as $event_id) {
+    foreach ($event_ids_updated as $event_id) {
         $cond =  array('SMSXE' => 'yes',
                        'Id'    => $event_id);
-        $updated_ids .= " == ".$event_id." == ";
+        //$updated_ids .= " == ".$event_id." == ";
+        $res = '';
         $event =  gsb_dvent_search_events_bycondition($response,$cond,$event_id);
-        gsb_dvent_msx_event_import($event);
-      }
+        try{
+          $res = gsb_dvent_msx_event_import($event);
+          $updated_ids .= " == ".$event_id." == ";
+          watchdog('gsb_dvent_msxevent_updated','MSx Event Success ID- '.$event_id.' Node id- '.$res->nid);
+        }
+        catch (Exception $e) {
+          $error_ids .= " == ".$event_id." == ";
+          watchdog('gsb_dvent_msxevent_updated','MSx Event Error ID- '.$event_id.' Error- '.$e);
+        }
+        
     }
-    $message = 'Updated or Created all modifed MSx events with date range: '.$start_time.' - '.$end_time.', Updated event Ids: '.$updated_ids;
-    watchdog('MSx Event Cron',$message);
+     $message = 'Executed MSx events with date range: '.$start_time.' - '.$end_time.', Success Ids: '.$updated_ids.' Error Ids- '.$error_ids;
+     watchdog('gsb_dvent_msxevent_updated',$message);
   }
   else {
-    $message = 'No MSx events for to update or create with date range: '.$start_time.' - '.$end_time;
-    watchdog('MSx Event Cron',$message);
+    $message = 'No MSx events for to update/create with date range: '.$start_time.' - '.$end_time;
+    watchdog('gsb_dvent_msxevent_updated',$message);
   }
   return $message;
 }
 
 /*
- * Gets upcoming msx events
+ * Import all MSX events, its only used for initial setup of MSx events in drupal
  */
 function gsb_dvent_batch_all_msx_events_import($options, &$context) {
   $filter_ge = trim(variable_get('filter_ge'));
@@ -699,7 +733,7 @@ function gsb_dvent_batch_all_msx_events_import($options, &$context) {
 }
 
 /*
- * Import a single msx event
+ * Import a single msx event, used for MSx batch process.
  */
 function gsb_dvent_event_import_msx_id($event) {
   $event_id = $event[0]['Id'];
@@ -728,6 +762,7 @@ function gsb_dvent_import_msx_by_id($event_id) {
   $cond =  array('SMSXE' => 'yes',
                 'Id' => $event_id);
   $event = gsb_dvent_search_events_bycondition($response, $cond,$event_id);
+  $message = '';
   // Save the event if it already exists.
   if(!empty($event)) {
       $query = new EntityFieldQuery();
@@ -736,13 +771,33 @@ function gsb_dvent_import_msx_by_id($event_id) {
         ->fieldCondition('field_item_id', 'value', (string)$event_id);
       $entities = $query->execute();
       if (!empty($entities['node'])) {
-         gsb_dvent_msx_event_import($event);
+        //gsb_dvent_msx_event_import($event);
+        watchdog('gsb_dvent_import_msx_by_id','Node Exist');
+        try{
+          $res = gsb_dvent_msx_event_import($event);
+          watchdog('gsb_dvent_import_msx_by_id','MSx Event Success ID- '.$event_id.' Node id- '.$res->nid);
+          $message = 'MSX Event with Id: '.$event_id.' has been imported successfully';
+        }
+        catch (Exception $e) {
+          watchdog('gsb_dvent_import_msx_by_id','MSx Event Error ID- '.$event_id.' Error- '.$e);
+          $message = 'MSX Event with Id: '.$event_id.' has failed to import. Error:- '.$e;
+        }
       }
       else
       {
-         gsb_dvent_msx_event_import($event);
+         //gsb_dvent_msx_event_import($event);
+         watchdog('gsb_dvent_import_msx_by_id','Creating new Node');
+         try{
+          $res = gsb_dvent_msx_event_import($event);
+          watchdog('gsb_dvent_import_msx_by_id','MSx Event Success ID- '.$event_id.' Node id- '.$res->nid);
+          $message = 'MSX Event with Id: '.$event_id.' has been imported successfully';
+         }
+         catch (Exception $e) {
+            watchdog('gsb_dvent_import_msx_by_id','MSx Event Error ID- '.$event_id.' Error- '.$e);
+            $message = 'MSX Event with Id: '.$event_id.' has failed to import. Error:- '.$e;
+         }
       }
-      return 'MSX Event with Id: '.$event_id.' has been imported successfully';
+      return $message;      
   } 
   else {
        return 'MSX Event with Id: '.$event_id.' data not found in Salesforce!';
@@ -750,13 +805,15 @@ function gsb_dvent_import_msx_by_id($event_id) {
 }
 
 /**
- * Imports an MSX Event
+ * Using event data from slaesforce, create/update MSx Admission event in Drupal
  */
 function gsb_dvent_msx_event_import($event, $session = NULL) {
 
   $eventid =  $event[0]['Id'];
+  $res_nodeid = $node = '';
   if($eventid == "")
   return false;
+  
    // Check if the event already exists
   $query = new EntityFieldQuery();
   $query->entityCondition('entity_type', 'node')
@@ -766,6 +823,8 @@ function gsb_dvent_msx_event_import($event, $session = NULL) {
   if (!empty($entities['node'])) {
     $nid = array_keys($entities['node']);
     $node = node_load(array_shift($nid));
+    $res_nodeid = $node->nid;
+     watchdog('gsb_dvent_msx_event_import','Node ID Exist '.$res_nodeid);
   }
   else {
     $field_values = array(
@@ -778,7 +837,8 @@ function gsb_dvent_msx_event_import($event, $session = NULL) {
     $node = entity_create('node', $field_values);
     $node->workbench_moderation_state_new = workbench_moderation_state_published();
     node_save($node);
-
+    $res_nodeid = $node->nid;
+    watchdog('gsb_dvent_msx_event_import','Node ID New '.$res_nodeid);
     // Set the workbench access
     $node->workbench_access['access_scheme'] = 'taxonomy'; // or 'menu'
     $workbench_section_tid  = _gsb_dvent_get_tid_planner('MSx', 'workbench_sections');
@@ -786,6 +846,7 @@ function gsb_dvent_msx_event_import($event, $session = NULL) {
     workbench_access_node_update($node);
   }
   // update the admission event node information
+  $node->workbench_moderation['updating_live_revision'] = 1;
   $wrapper = entity_metadata_wrapper('node', $node);
   $wrapper->field_event_detail->set(1);
   $program_tid = _gsb_dvent_get_tid_planner('MSx', 'program');
@@ -804,120 +865,121 @@ function gsb_dvent_msx_event_import($event, $session = NULL) {
   // Default to original link
   $field_link = trim($event[0]['registration_url__c']);
 
-
    // Convert the start and end time to UTC
-   if (isset($event[0]['start_time__c']) && !empty($event[0]['start_time__c'])) {
-      $pmstr = trim(substr($event[0]['start_time__c'], -2)); 
-      if($pmstr == 'pm' || $pmstr == 'PM' || $pmstr == 'am' || $pmstr == 'AM') {
-        $stime = substr($event[0]['start_time__c'],0,-2);
-        if($pmstr == 'pm' || $pmstr == 'PM')
-        {
-          $stime_expld = explode(":", $stime);
-          if($stime_expld[0] < 12) {
-            $stime_expld[0] = 12 + $stime_expld[0];
-            $stime = $stime_expld[0].":".$stime_expld[1];
-          }
-        }
-      }
-   }
-   else
+    if (isset($event[0]['start_time__c']) && !empty($event[0]['start_time__c'])) {
+      $stime = _gsb_dvent_get_converted_time($event[0]['start_time__c']);
+    }
+    else
       $stime = "00:00";
 
     if (isset($event[0]['end_time__c']) && !empty($event[0]['end_time__c'])) {
-      $pmstr = trim(substr($event[0]['end_time__c'], -2)); 
-      if($pmstr == 'pm' || $pmstr == 'PM' || $pmstr == 'am' || $pmstr == 'AM') {
-        $etime = substr($event[0]['end_time__c'],0,-2);
-        if($pmstr == 'pm' || $pmstr == 'PM')
-        {
-          $etime_expld = explode(":", $etime);
-          if($etime_expld[0] < 12) {
-            $etime_expld[0] = 12 + $etime_expld[0];
-            $etime = $etime_expld[0].":".$etime_expld[1];
-          }
-        }
-      }
-      
+      $etime = _gsb_dvent_get_converted_time($event[0]['end_time__c']);
     }
     else
       $etime = "00:00";
 
-    $start_time = trim($event[0]['StartDate']." ".$stime);
+    //$start_time = trim($event[0]['StartDate'])." ".$stime;
+    $start_time = trim($event[0]['StartDate']);
 
-    if(!empty($event[0]['EndDate']) )
-    $end_time   =  trim($event[0]['EndDate']." ".$etime);
-    else
-    $end_time   = trim($event[0]['StartDate']." ".$etime);
-
-    $start_time = _gsb_dvent_convert_to_UTC($start_time);
-    $end_time   = _gsb_dvent_convert_to_UTC($end_time);
+    if(!empty($event[0]['EndDate']) ){
+      //$end_time  =  trim($event[0]['EndDate']." ".$etime);
+      $end_time  =  trim($event[0]['EndDate']);
+    } 
+    else {
+      //$end_time   = trim($event[0]['StartDate']." ".$etime);
+      $end_time   = trim($event[0]['StartDate']);
+    }
+    $start_time_from_api = $start_time." ".$event[0]['start_time__c'];
+    $end_time_from_api   = $end_time." ".$event[0]['end_time__c'];
+    watchdog('gsb_dvent_msx_event_import','Salesforce Start DateTime: '.$start_time_from_api.' End DateTime: '.$end_time_from_api);
+    $start_time = _gsb_dvent_convert_to_UTC($start_time, $stime, $start_time_from_api);
+    $end_time   = _gsb_dvent_convert_to_UTC($end_time,$etime,$end_time_from_api);
   
-  // Set all the wrapper values
-  $wrapper->field_event_status->set($event_status);
-  $wrapper->title->set((string)$event_title);
-  $wrapper->field_editorial_summary->set((string)$field_editorial_summary);
-  $wrapper->field_calendar_display->set($field_calendar_display);
-  if (valid_url($field_link, TRUE)) {
-    $wrapper->field_link_single->url->set($field_link);
-    $wrapper->field_link_single->attributes->set(array('target' => '_blank'));
-  }
+    // Set all the wrapper values
+    $wrapper->field_event_status->set($event_status);
+    $wrapper->title->set((string)$event_title);
+    $wrapper->field_editorial_summary->set((string)$field_editorial_summary);
+    $wrapper->field_calendar_display->set($field_calendar_display);
+    if (valid_url($field_link, TRUE)) {
+      $wrapper->field_link_single->url->set($field_link);
+      $wrapper->field_link_single->attributes->set(array('target' => '_blank'));
+    }
 
-  // Set the event start and end date
-  $wrapper->field_event_date[0]->set(array(
-    'value' => $start_time,
-    'value2' => $end_time,
-  ));
+    // Set the event start and end date
+    $wrapper->field_event_date[0]->set(array(
+      'value' => $start_time,
+      'value2' => $end_time,
+    ));
 
-  // Get drupal timezone from taxonomy mapping
-  $timezone_term = taxonomy_get_term_by_name((string)$event[0]['calendar_region__c'], 'timezone');
-  $timezone_term = array_values($timezone_term);
-  if (!empty($timezone_term)) {
-    $wrapper->field_time_zone->set($timezone_term[0]->field_drupal_timezone['und'][0]['value']);
-  }
+    // Get drupal timezone from taxonomy mapping
+    $timezone_term = taxonomy_get_term_by_name((string)$event[0]['calendar_region__c'], 'timezone');
+    $timezone_term = array_values($timezone_term);
+    if (!empty($timezone_term)) {
+      $wrapper->field_time_zone->set($timezone_term[0]->field_drupal_timezone['und'][0]['value']);
+    }
 
-  // Set the event category
-  $cvent_event_types = explode(', ', $event[0]['event_type_for_calendar__c']);
-  $term_merge = array();
-  foreach ($cvent_event_types as $cvent_event_type) {
-    $term = taxonomy_get_term_by_name($cvent_event_type, 'event_category');
+    // Set the event category
+    $cvent_event_types = explode(', ', $event[0]['event_type_for_calendar__c']);
+    $term_merge = array();
+    foreach ($cvent_event_types as $cvent_event_type) {
+      $term = taxonomy_get_term_by_name($cvent_event_type, 'event_category');
+      $term = array_values($term);
+      $term_merge = array_merge($term_merge, $term);
+      $wrapper->field_event_category->set($term_merge);
+    }
+
+    // Set the region taxonomy
+    $term = taxonomy_get_term_by_name((string)$event[0]['calendar_region__c'], 'region');
     $term = array_values($term);
-    $term_merge = array_merge($term_merge, $term);
-    $wrapper->field_event_category->set($term_merge);
-  }
+    $wrapper->field_region->set($term);
 
-  // Set the region taxonomy
-  $term = taxonomy_get_term_by_name((string)$event[0]['calendar_region__c'], 'region');
-  $term = array_values($term);
-  $wrapper->field_region->set($term);
+    // Set different event location fields
+    $field_collection = $wrapper->field_event_location->raw();
 
-  // Set different event location fields
-  $field_collection = $wrapper->field_event_location->raw();
-
-  if(empty($field_collection)) {
-    $field_collection_wrapper = _gsb_dvent_create_fc_wrapper('node', $node, 'field_event_location');
-  }
-  else {
-    $field_collection_wrapper = entity_metadata_wrapper('field_collection_item', $wrapper->field_event_location[0]->value());
-  }
+    if(empty($field_collection)) {
+      $field_collection_wrapper = _gsb_dvent_create_fc_wrapper('node', $node, 'field_event_location');
+    }
+    else {
+      $field_collection_wrapper = entity_metadata_wrapper('field_collection_item', $wrapper->field_event_location[0]->value());
+    }
+   
+    $field_collection_wrapper->field_event_location_type->set((string)trim($event[0]['admissions_event_category__c']) );
+    if(isset($event[0]['country_name__c']) && !empty($event[0]['country_name__c'])){
+      $country_code = _gsb_dvent_convert_country_name_to_country_code( $event[0]['country_name__c']);
+      if($country_code == "")
+      $country_code = 'US'; 
+      $field_collection_wrapper->field_address->country->set((string)$country_code);
+    }
+    
+    $field_collection_wrapper->field_address->locality->set((string)trim($event[0]['city__c']));
+    $field_collection_wrapper->field_address->administrative_area->set((string)trim($event[0]['state_name__c']) );
+    /*if ($country_code == 'US') {
+      $field_collection_wrapper->field_address->administrative_area->set((string)trim($event[0]['state_name__c']));
+    }*/
  
-  $field_collection_wrapper->field_event_location_type->set((string)trim($event[0]['admissions_event_category__c']) );
-  if(isset($event[0]['country_name__c']) && !empty($event[0]['country_name__c'])){
-    $country_code = _gsb_dvent_convert_country_name_to_country_code( $event[0]['country_name__c']);
-    if($country_code == "")
-    $country_code = 'US'; 
-    $field_collection_wrapper->field_address->country->set((string)$country_code);
-  }
-  
-  $field_collection_wrapper->field_address->locality->set((string)trim($event[0]['city__c']));
-  $field_collection_wrapper->field_address->administrative_area->set((string)trim($event[0]['state_name__c']) );
-  /*if ($country_code == 'US') {
-    $field_collection_wrapper->field_address->administrative_area->set((string)trim($event[0]['state_name__c']));
-  }*/
-  
-  $field_collection_wrapper->save();
-
-  // Finally save the entity
-  $wrapper->save();
-
+    // Finally save the entity
+    $field_collection_wrapper->save();
+    $wrapper->save(); 
+    return $node;     
 }
 
-
+/**
+  * Get the converted time with 24 hours format
+  */
+function _gsb_dvent_get_converted_time($fetch_time=null) {
+  $pmstr = trim(substr($fetch_time, -2)); 
+  if($pmstr == 'pm' || $pmstr == 'PM' || $pmstr == 'am' || $pmstr == 'AM') {
+    $etime = substr($fetch_time,0,-2);
+    if($pmstr == 'pm' || $pmstr == 'PM') {
+        $etime_expld = explode(":", $etime);
+        if($etime_expld[0] < 12) {
+          $etime_expld[0] = 12 + $etime_expld[0];
+          $etime = $etime_expld[0].":".$etime_expld[1];
+        }
+    }
+  }
+  else {
+    $etime = "00:00";
+  }
+  return $etime;
+}
