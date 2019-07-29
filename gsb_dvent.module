@@ -406,9 +406,10 @@ function gsb_dvent_event_import($event, $session = NULL) {
     workbench_access_node_update($node);
   }
 
-  $node->workbench_moderation['updating_live_revision'] = 1;
+  //$node->workbench_moderation['updating_live_revision'] = 1;
   // update the admission event node information
   $wrapper = entity_metadata_wrapper('node', $node);
+  $wrapper->revision->set(TRUE);
   $wrapper->field_event_detail->set(1);
   $program_tid = _gsb_dvent_get_tid_planner('MBA', 'program');
   $wrapper->field_program_single->set($program_tid);
@@ -846,9 +847,10 @@ function gsb_dvent_msx_event_import($event, $session = NULL) {
     workbench_access_node_update($node);
   }
   // update the admission event node information
-  $node->workbench_moderation['updating_live_revision'] = 1;
+  //$node->workbench_moderation['updating_live_revision'] = 1;
   $wrapper = entity_metadata_wrapper('node', $node);
   $wrapper->field_event_detail->set(1);
+  $wrapper->revision->set(TRUE);
   $program_tid = _gsb_dvent_get_tid_planner('MSx', 'program');
   $wrapper->field_program_single->set($program_tid);
 
