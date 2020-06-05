@@ -416,6 +416,9 @@ function gsb_dvent_event_import($event, $session = NULL) {
 
   $wrapper->field_item_id->set((string)$eventid);
   $event_status = trim($event[0]['Status']);
+  if ($event_status == 'Waitlist Reg Only') { // We are using only 1 waitlisted status
+    $event_status = 'Waitlisted';
+  }
   $event_title  = trim($event[0]['event_name_for_email__c']);
   $remove[] = "'";
   $remove[] = '"';
